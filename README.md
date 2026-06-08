@@ -1,93 +1,111 @@
 # Entropic Fingerprint
 
-> Commit entropy predicts major software releases in irregularly-released
-> open source projects with 72% accuracy (p=0.025).
-> It fails on annual release cycles. Here is why.
+> We hypothesized that Shannon entropy over git commit histories
+> could predict software releases. Across 9 repositories and 400k+
+> commits, it cannot - but what it *does* reveal is more interesting.
 
-![Entropic Fingerprint Hero](outputs/entropic_fingerprint.png)
+![Entropic Fingerprint](outputs/entropic_fingerprint_v2.png)
 
 ## The idea
 
-Every codebase accumulates disorder over time. When developers prepare
-for a major release, they touch many files in scattered, high-churn
-bursts — refactoring, cleaning up, merging features. This creates
-measurable spikes in Shannon entropy computed over file-level churn
-distributions.
+Every codebase accumulates disorder over time. Intuitively, release
+preparation should create measurable entropy spikes - developers
+touching many files, refactoring, cleaning up. We tested whether
+this signal exists and whether it generalizes.
 
-We call this the **entropic fingerprint** of a release.
+It doesn't. Here is why.
 
 ## The metric
 
-For each commit, we compute entropy over how churn is distributed
-across modified files:
+For each month, we compute Shannon entropy over file-level churn
+distributions across all commits in that window:
 
-H = -( sum of p(i) * log2(p(i)) ) * log2(total_churn + 1)
+H = -sum( p(i) * log2(p(i)) )
 
 where p(i) is the fraction of total churn in file i.
-
-A commit touching 10 files evenly scores high entropy.
-A commit touching 10 files but concentrating 90% in one scores low.
-This is real Shannon entropy — not a complexity heuristic.
+High entropy = churn spread evenly across many files.
+Low entropy = churn concentrated in a few files.
 
 ## Dataset
 
-| Repo | Commits | Years | Release style |
-|------|---------|-------|--------------|
-| Flask | 5,539 | 2010-2026 | Irregular |
-| Django | 34,665 | 2005-2026 | Irregular |
-| CPython | 131,677 | 1990-2026 | Annual (Oct) |
-| **Total** | **171,881** | — | — |
+| Repo | Commits (2018–2024) | Release style |
+|------|-------------------|---------------|
+| Flask | ~400 | irregular |
+| Django | ~8,500 | irregular |
+| CPython | 24,147 | annual |
+| NumPy | 20,548 | versioned |
+| Rails | 26,498 | versioned |
+| Rust | 202,031 | time-based (6wk) |
+| scikit-learn | 9,533 | versioned |
+| React | 10,269 | irregular |
+| VS Code | 100,464 | monthly |
+| **Total** | **~400k** | |
 
-## Results
+## What we found
 
-| Repo | Accuracy | p-value | Significant |
-|------|----------|---------|-------------|
-| Flask | 70% | 0.066 | trend |
-| Django | 74% | 0.025 | yes |
-| CPython | 36% | — | n/a |
-| **Irregular combined** | **72%** | — | — |
+### 1. Entropy does not predict releases
 
-Baseline (random chance): 50%
+A Random Forest classifier trained on entropy features and tested
+via leave-one-repo-out cross-validation achieved mean AUC of 0.47
+across 9 repos - indistinguishable from random (0.50).
 
-## The key finding
+Release months and non-release months show nearly identical entropy
+distributions (see bottom-right plot above). There is no pre-release
+entropy spike that generalizes across projects.
 
-The signal exists only in projects with irregular release cycles.
-CPython's locked annual cadence suppresses entropy contrast —
-the codebase is always active, so spikes carry no information.
+### 2. Entropy is primarily driven by commit volume
 
-Django's result is statistically significant (p=0.025, permutation
-test, n=10,000). Flask trends in the same direction but is
-underpowered — only 17 release events, too few to clear p<0.05.
+The strongest signal in the data is structural, not behavioral:
 
-This suggests entropy fingerprinting detects **release surprise** —
-structural change relative to a project's normal baseline activity.
+| Correlation | Spearman r | p-value |
+|-------------|-----------|---------|
+| Commit volume → entropy mean | **0.817** | **0.007** |
+| Release rate → entropy mean | 0.400 | 0.286 |
+| Release rate → entropy CV | -0.117 | 0.765 |
 
-## Predictive model
+Repositories with more commits per month show systematically higher
+entropy - not because of release behavior, but because more diverse
+changes happen continuously. Flask (low volume, spiky) and Rust
+(extremely high volume, stable) sit at opposite ends of this spectrum.
 
-A Random Forest classifier trained on rolling entropy features
-(cross-repo: train on Django, test on Flask) achieves 1.4x lift
-over baseline in identifying pre-release months.
+### 3. This confound explains classifier failure
 
-The gap between correlation accuracy (72%) and predictive lift (1.4x)
-is itself a finding: entropy is a better descriptor of release events
-than a real-time predictor. Future work would add co-author network
-features, issue tracker activity, and PR merge rates.
+A model trained on one repo and tested on another is implicitly
+learning commit volume differences, not release patterns. When
+controlling for this, no release signal remains.
+
+## Why this matters
+
+Entropy-based release prediction is a reasonable hypothesis. Testing
+it rigorously across 9 diverse repositories — rather than 2-3 with
+cherry-picked results - reveals that the signal does not generalize.
+Commit volume is a structural confound that previous smaller studies
+did not control for.
+
+Future work: author network entropy, issue tracker velocity, and
+PR merge rate may carry orthogonal signal that survives cross-repo
+validation.
 
 ## Reproduce
 
 ```bash
 pip install -r requirements.txt
-
-python run.py collect       # collect commit data (~hours for CPython)
-python run.py analyze       # correlation analysis
-python run.py significance  # permutation tests
-python run.py model         # predictive model
-python run.py visualize     # generate charts
+python collect_new.py          # collect commits (hours)
+python fetch_releases.py       # fetch release dates via GitHub API
+python compute_entropy.py      # compute monthly entropy + features
+python cluster_repos.py        # repo profile analysis
+python train_model.py          # cross-repo classifier
+python visualize_findings.py   # generate figure
 ```
 
 ## Structure
 
-data/        commit CSVs (Flask, Django, CPython)
-src/         analysis scripts
-outputs/     generated charts
-run.py       entry point
+data/        commit CSVs + release JSON for all 9 repos
+outputs/     generated figures + model results
+src/         original v1 analysis scripts (Flask/Django/CPython)
+
+---
+
+*Built as part of an exploration into information-theoretic analysis
+of software evolution. v1 (3 repos, 171k commits) live at the same
+repo - v2 expands scope and applies rigorous cross-validation.*
